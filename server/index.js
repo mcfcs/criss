@@ -5,7 +5,7 @@
 //   2. GET  /api/layouts — list available layouts (for the client menu).
 //   3. WebSocket /ws     — realtime game rooms (one shared puzzle per room).
 //   4. Serve the built client (../client/dist) in production.
-import "dotenv/config";
+import dotenv from "dotenv";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,9 @@ import { Game } from "./game.js";
 import { loadPool, layoutCatalog } from "./puzzleStore.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Load the repo-root .env first, then a server/.env if present (local wins).
+dotenv.config({ path: path.join(__dirname, "..", ".env") });
+dotenv.config();
 const PORT = process.env.PORT || 3001;
 
 const app = express();
