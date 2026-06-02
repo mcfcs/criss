@@ -87,6 +87,7 @@ export async function startBot() {
     const buttons = [
       new ButtonBuilder().setCustomId("answer").setLabel("Answer").setEmoji("✏️").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("new").setLabel("New puzzle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("searchbtn").setLabel("Search puzzle").setEmoji("🌐").setStyle(ButtonStyle.Secondary),
     ];
     if (game.hasPuzzle() && game.mode === "normal") {
       buttons.push(new ButtonBuilder().setCustomId("autocheck")
@@ -212,6 +213,25 @@ export async function startBot() {
     return game;
   }
 
+  // Build the ephemeral "search results" message (used by /search and the
+  // Search puzzle button). Returns { content, components }.
+  async function buildSearchPayload(query, mode, size) {
+    let results;
+    try {
+      results = await searchPuzzles(query, { mini: size !== "standard", standard: size !== "mini", pageSize: 25 });
+    } catch (e) {
+      return { content: `Search failed: ${e.message}`, components: [] };
+    }
+    if (!results.length) return { content: `No puzzles found for “${query}”.`, components: [] };
+    const menu = new StringSelectMenuBuilder().setCustomId(`pickpuzzle:${mode}`).setPlaceholder("Pick a puzzle to play…")
+      .addOptions(results.slice(0, 25).map((r) => ({
+        label: r.title.slice(0, 100),
+        description: `${r.size}${r.author ? " · " + r.author : ""}`.slice(0, 100),
+        value: r.pid,
+      })));
+    return { content: `Found ${results.length} puzzle(s) for “${query}” (${mode} mode). Pick one:`, components: [new ActionRowBuilder().addComponents(menu)] };
+  }
+
   // Post a board for a prebuilt (e.g. imported) puzzle.
   async function showPuzzle(channel, roomId, puzzle, mode) {
     const game = getGame(roomId);
@@ -273,21 +293,7 @@ export async function startBot() {
             const q = interaction.options.getString("query");
             const mode = interaction.options.getString("mode") || "normal";
             const size = interaction.options.getString("size") || "any";
-            let results;
-            try {
-              results = await searchPuzzles(q, { mini: size !== "standard", standard: size !== "mini", pageSize: 25 });
-            } catch (e) {
-              await interaction.editReply(`Search failed: ${e.message}`);
-              break;
-            }
-            if (!results.length) { await interaction.editReply(`No puzzles found for “${q}”.`); break; }
-            const menu = new StringSelectMenuBuilder().setCustomId(`pickpuzzle:${mode}`).setPlaceholder("Pick a puzzle to play…")
-              .addOptions(results.slice(0, 25).map((r) => ({
-                label: r.title.slice(0, 100),
-                description: `${r.size}${r.author ? " · " + r.author : ""}`.slice(0, 100),
-                value: r.pid,
-              })));
-            await interaction.editReply({ content: `Found ${results.length} puzzle(s) for “${q}”. Pick one (${mode} mode):`, components: [new ActionRowBuilder().addComponents(menu)] });
+            await interaction.editReply(await buildSearchPayload(q, mode, size));
             break;
           }
         }
@@ -316,6 +322,18 @@ export async function startBot() {
             ),
           );
           await interaction.reply({ content: "Pick a layout for the new puzzle:", components: [row], ephemeral: true });
+        } else if (interaction.customId === "searchbtn") {
+          const modal = new ModalBuilder().setCustomId("searchmodal").setTitle("Search crosswithfriends.com").addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId("query").setLabel("Title or author")
+                .setPlaceholder("e.g. monday, mini, USA Today").setStyle(TextInputStyle.Short).setRequired(true),
+            ),
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder().setCustomId("size").setLabel("Size: mini / standard / any (optional)")
+                .setPlaceholder("any").setStyle(TextInputStyle.Short).setRequired(false),
+            ),
+          );
+          await interaction.showModal(modal);
         } else if (interaction.customId === "browse") {
           // Paginated, Across/Down-grouped clue picker for big grids.
           const across = pickable(game, "across");
@@ -373,6 +391,15 @@ export async function startBot() {
 
       // ----- modal submits -----
       if (interaction.isModalSubmit()) {
+        if (interaction.customId === "searchmodal") {
+          await interaction.deferReply({ ephemeral: true });
+          const query = interaction.fields.getTextInputValue("query");
+          let size = (interaction.fields.getTextInputValue("size") || "").trim().toLowerCase();
+          if (!["mini", "standard", "any"].includes(size)) size = "any";
+          const mode = game.hasPuzzle() ? game.mode : "normal";
+          await interaction.editReply(await buildSearchPayload(query, mode, size));
+          return;
+        }
         let number, direction;
         const word = interaction.fields.getTextInputValue("word");
         if (interaction.customId === "answmodal") {
