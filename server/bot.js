@@ -5,6 +5,7 @@
 import { getGame, emitChange, onChange } from "./gameStore.js";
 import { LAYOUTS } from "./crossword/layouts.js";
 import { renderGrid, renderClues, renderProgress, renderScores } from "./render.js";
+import { renderBoardPNG } from "./renderImage.js";
 
 const trunc = (s, n = 1024) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
@@ -54,7 +55,7 @@ export async function startBot() {
   ].map((c) => c.toJSON());
 
   // ---- rendering ----
-  const boardPayload = (game) => {
+  const boardPayload = async (game) => {
     const p = game.puzzleFull;
     if (!p) return { content: "No puzzle yet — use `/crossword` to start one." };
     const sub =
@@ -64,14 +65,21 @@ export async function startBot() {
     const embed = new EmbedBuilder()
       .setTitle(`🧩 ${p.layoutName}${sub}`)
       .setColor(game.isComplete() ? 0x2ecc71 : 0x5865f2)
-      .setDescription("```\n" + renderGrid(game) + "\n```\n" + renderProgress(game))
       .addFields(
         { name: "Across", value: trunc(renderClues(game, "across")), inline: true },
         { name: "Down", value: trunc(renderClues(game, "down")), inline: true },
         { name: "Scores", value: trunc(renderScores(game)) },
       )
       .setFooter({ text: game.isComplete() ? "Solved! 🎉  /crossword for a new one" : "/answer  ·  /reveal  ·  /board" });
-    return { embeds: [embed] };
+
+    const png = await renderBoardPNG(game).catch(() => null);
+    if (png) {
+      embed.setDescription(renderProgress(game)).setImage("attachment://board.png");
+      return { embeds: [embed], files: [{ attachment: png, name: "board.png" }] };
+    }
+    // Fallback: ASCII grid if image rendering isn't available.
+    embed.setDescription("```\n" + renderGrid(game) + "\n```\n" + renderProgress(game));
+    return { embeds: [embed], files: [] };
   };
 
   // The live board message per channel (so the Activity and bot edits show up).
@@ -83,7 +91,7 @@ export async function startBot() {
     const t = setTimeout(async () => {
       editTimers.delete(roomId);
       try {
-        await msg.edit(boardPayload(getGame(roomId)));
+        await msg.edit(await boardPayload(getGame(roomId)));
       } catch {
         /* token expired / message gone — /board reposts */
       }
@@ -111,7 +119,7 @@ export async function startBot() {
           game.generating = true;
           game.newGame({ layoutName: layout, difficulty });
           game.generating = false;
-          const msg = await interaction.channel.send(boardPayload(game));
+          const msg = await interaction.channel.send(await boardPayload(game));
           boards.set(roomId, msg);
           await interaction.editReply(`🧩 New **${game.puzzleFull.layoutName}** crossword — answer with \`/answer\`.`);
           emitChange(roomId);
@@ -157,7 +165,8 @@ export async function startBot() {
           break;
         }
         case "board": {
-          const msg = await interaction.reply({ ...boardPayload(game), fetchReply: true });
+          const payload = await boardPayload(game);
+          const msg = await interaction.reply({ ...payload, fetchReply: true });
           if (game.hasPuzzle()) boards.set(roomId, msg);
           break;
         }
