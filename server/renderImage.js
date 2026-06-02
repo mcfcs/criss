@@ -29,8 +29,10 @@ const BLOCK = "#0b0d12";
 const GRID_LINE = "#9aa3b0";
 const CELL = "#f7f7f2";
 const CELL_SOLVED = "#bfe6cd";
+const CELL_WRONG = "#f3c5c5";
 const TEXT = "#11151c";
 const TEXT_SOLVED = "#0c3a22";
+const TEXT_WRONG = "#7a1f1f";
 const CLUE = "#dfe6ef";
 const CLUE_DONE = "#6b7686";
 const HEADER = "#f2c14e";
@@ -60,8 +62,21 @@ export async function renderGridPNG(game) {
         ctx.fillRect(x, y, cell, cell);
         continue;
       }
-      const solved = game.solvedCells.has(`${r},${c}`);
-      ctx.fillStyle = solved ? CELL_SOLVED : CELL;
+      // Cell tint by mode: competitive → solved-cell green; normal+autocheck →
+      // per-cell green (correct) / red (wrong); otherwise plain.
+      const letter = game.fills[r][c];
+      let bg = CELL;
+      let txt = TEXT;
+      if (game.mode === "normal") {
+        if (game.autocheck && letter) {
+          if (game.cellCorrect(r, c)) { bg = CELL_SOLVED; txt = TEXT_SOLVED; }
+          else { bg = CELL_WRONG; txt = TEXT_WRONG; }
+        }
+      } else if (game.solvedCells.has(`${r},${c}`)) {
+        bg = CELL_SOLVED;
+        txt = TEXT_SOLVED;
+      }
+      ctx.fillStyle = bg;
       ctx.fillRect(x, y, cell, cell);
       ctx.strokeStyle = GRID_LINE;
       ctx.lineWidth = 1;
@@ -75,9 +90,8 @@ export async function renderGridPNG(game) {
         ctx.textBaseline = "top";
         ctx.fillText(String(num), x + 4, y + 3);
       }
-      const letter = game.fills[r][c];
       if (letter) {
-        ctx.fillStyle = solved ? TEXT_SOLVED : TEXT;
+        ctx.fillStyle = txt;
         ctx.font = `600 ${Math.round(cell * 0.58)}px ${FONT}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -109,7 +123,8 @@ function columnLines(ctx, game, direction, maxWidth, fontSize) {
   ctx.font = `${fontSize}px ${FONT}`;
   const lines = [{ kind: "header", text: direction === "across" ? "ACROSS" : "DOWN" }];
   for (const e of game.puzzleFull.entries.filter((x) => x.direction === direction)) {
-    const solved = game.solved.has(`${e.direction}-${e.number}`);
+    // No correctness marks in normal mode (don't reveal which clues are right).
+    const solved = game.mode !== "normal" && game.solved.has(`${e.direction}-${e.number}`);
     wrapText(ctx, `${e.number}. ${e.clue} (${e.length})`, maxWidth).forEach((t, i) =>
       lines.push({ kind: "clue", text: i === 0 ? t : "    " + t, solved }),
     );

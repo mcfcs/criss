@@ -23,6 +23,10 @@ export class Game {
     this.scores = new Map(); // userId -> points
     this.startedAt = null;
     this.generating = false; // a puzzle is currently being generated
+    this.mode = "competitive"; // "competitive" (validate/lock/score) | "normal" (free fill)
+    this.autocheck = false; // normal mode: tint cells by per-cell correctness
+    this.solution = null; // h x w of correct letters (server only)
+    this.contributors = new Set(); // userIds who filled in normal mode
   }
 
   addPlayer(connId, user) {
@@ -35,7 +39,7 @@ export class Game {
     return !!this.puzzleFull;
   }
 
-  newGame({ layoutName = null, difficulty = null } = {}) {
+  newGame({ layoutName = null, difficulty = null, mode = "competitive" } = {}) {
     const full = makePuzzle({ layoutName, difficulty });
     this.puzzleFull = full;
     this.w = full.width;
@@ -46,7 +50,16 @@ export class Game {
     this.solvedBy = new Map();
     this.solvedCells = new Set();
     this.scores = new Map();
+    this.contributors = new Set();
+    this.mode = mode === "normal" ? "normal" : "competitive";
+    this.autocheck = false;
     this.startedAt = Date.now();
+    // Build the solution grid (server-side only) for completion + autocheck.
+    this.solution = Array.from({ length: this.h }, () => Array(this.w).fill(null));
+    for (const e of full.entries) {
+      const cells = cellsOf(e);
+      for (let i = 0; i < cells.length; i++) this.solution[cells[i][0]][cells[i][1]] = e.answer[i];
+    }
   }
 
   #inBounds(r, c) {
@@ -124,6 +137,58 @@ export class Game {
     return { entry: e, complete: this.isComplete() };
   }
 
+  // ---------- normal (co-op) mode ----------
+
+  /** Fill a clue's cells with the given letters WITHOUT validating or locking.
+   *  Overwrites freely; the grid just shows what people have entered. */
+  fillClue(userId, number, direction, word) {
+    const e = this.findEntry(number, direction);
+    if (!e) return { error: "no_clue" };
+    const letters = String(word || "").toUpperCase().replace(/[^A-Z]/g, "");
+    if (letters.length !== e.length) return { error: "length", entry: e };
+    const cells = cellsOf(e);
+    for (let i = 0; i < cells.length; i++) this.fills[cells[i][0]][cells[i][1]] = letters[i];
+    if (userId) this.contributors.add(userId);
+    return { filled: true, entry: e, complete: this.isFullyComplete() };
+  }
+
+  cellCorrect(r, c) {
+    return this.solution?.[r]?.[c] != null && this.fills[r][c] === this.solution[r][c];
+  }
+
+  /** Current letters of a clue, blanks as "·" (shows crossing letters). */
+  cluePattern(number, direction) {
+    const e = this.findEntry(number, direction);
+    if (!e) return "";
+    return cellsOf(e).map(([r, c]) => this.fills[r][c] || "·").join("");
+  }
+
+  /** Every open cell filled in with the correct letter. */
+  isFullyComplete() {
+    if (!this.puzzleFull) return false;
+    for (let r = 0; r < this.h; r++)
+      for (let c = 0; c < this.w; c++)
+        if (this.solution[r][c] != null && this.fills[r][c] !== this.solution[r][c]) return false;
+    return true;
+  }
+
+  /** Completion check appropriate to the mode. */
+  isDone() {
+    return this.mode === "normal" ? this.isFullyComplete() : this.isComplete();
+  }
+
+  setAutocheck(on) {
+    this.autocheck = !!on;
+  }
+
+  /** Whether a clue should be dropped from the picker. Competitive: solved.
+   *  Normal: fully filled (don't re-offer, but don't reveal correctness). */
+  pickerExclude(e) {
+    const cells = cellsOf(e);
+    if (this.mode === "normal") return cells.every(([r, c]) => this.fills[r][c]);
+    return this.solved.has(`${e.direction}-${e.number}`);
+  }
+
   #checkSolves(userId, r, c) {
     const newly = [];
     for (const e of this.puzzleFull.entries) {
@@ -170,7 +235,9 @@ export class Game {
       solvedBy: Object.fromEntries(this.solvedBy),
       scores: Object.fromEntries(this.scores),
       players: [...this.players.values()].map((p) => ({ id: p.id, username: p.username })),
-      complete: this.isComplete(),
+      mode: this.mode,
+      autocheck: this.autocheck,
+      complete: this.isDone(),
       elapsedMs: this.startedAt ? Date.now() - this.startedAt : 0,
     };
   }

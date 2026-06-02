@@ -42,6 +42,10 @@ export async function startBot() {
       ))
       .addStringOption((o) => o.setName("difficulty").setDescription("Word difficulty (best-effort)").addChoices(
         { name: "Easy", value: "EASY" }, { name: "Moderate", value: "MODERATE" }, { name: "Hard", value: "DIFFICULT" },
+      ))
+      .addStringOption((o) => o.setName("mode").setDescription("How to play").addChoices(
+        { name: "Normal — fill freely, autocheck available", value: "normal" },
+        { name: "Competitive — guess words, score points", value: "competitive" },
       )),
     new SlashCommandBuilder().setName("answer").setDescription("Answer a clue")
       .addIntegerOption((o) => o.setName("number").setDescription("Clue number").setRequired(true))
@@ -55,33 +59,41 @@ export async function startBot() {
   ].map((c) => c.toJSON());
 
   // ---------- board rendering + interactive components ----------
-  const unsolvedEntries = (game) =>
-    game.hasPuzzle() ? game.puzzleFull.entries.filter((e) => !game.solved.has(`${e.direction}-${e.number}`)) : [];
-  const optionLabel = (e) =>
-    `${e.number}${e.direction === "across" ? "A" : "D"} · ${e.clue} (${e.length})`.slice(0, 100);
-  const cluePickerRow = (entries, id) =>
+  const pickable = (game, direction) =>
+    game.hasPuzzle()
+      ? game.puzzleFull.entries.filter((e) => e.direction === direction && !game.pickerExclude(e))
+      : [];
+  const optionLabel = (e) => `${e.number}. ${e.clue} (${e.length})`.slice(0, 100);
+  const pickerRow = (entries, id, placeholder) =>
     new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId(id).setPlaceholder("Pick a clue to answer…")
+      new StringSelectMenuBuilder().setCustomId(id).setPlaceholder(placeholder)
         .addOptions(entries.slice(0, 25).map((e) => ({ label: optionLabel(e), value: `${e.number}:${e.direction}` }))),
     );
   const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
 
-  // Board buttons + clue picker. Big grids (>25 clues) get a 📋 button that
-  // opens an ephemeral, paginated picker instead of an inline dropdown.
+  // Board buttons + clue picker. Pickers are split Across/Down. When a direction
+  // has >25 open clues they don't fit one dropdown, so a 📋 button opens an
+  // ephemeral paginated picker instead.
   const buildComponents = (game) => {
     const buttons = [
       new ButtonBuilder().setCustomId("answer").setLabel("Answer").setEmoji("✏️").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("new").setLabel("New puzzle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
     ];
-    const unsolved = unsolvedEntries(game);
-    let pickerRow = null;
-    if (unsolved.length > 25) {
-      buttons.push(new ButtonBuilder().setCustomId("browse").setLabel("Pick a clue").setEmoji("📋").setStyle(ButtonStyle.Secondary));
-    } else if (unsolved.length > 0) {
-      pickerRow = cluePickerRow(unsolved, "cluepick:0");
+    if (game.hasPuzzle() && game.mode === "normal") {
+      buttons.push(new ButtonBuilder().setCustomId("autocheck")
+        .setLabel(game.autocheck ? "Autocheck: ON" : "Autocheck: OFF").setEmoji("🔎")
+        .setStyle(game.autocheck ? ButtonStyle.Success : ButtonStyle.Secondary));
     }
-    const rows = [new ActionRowBuilder().addComponents(...buttons)];
-    if (pickerRow) rows.push(pickerRow);
+    const across = pickable(game, "across");
+    const down = pickable(game, "down");
+    const rows = [];
+    if (across.length > 25 || down.length > 25) {
+      buttons.push(new ButtonBuilder().setCustomId("browse").setLabel("Pick a clue").setEmoji("📋").setStyle(ButtonStyle.Secondary));
+    } else {
+      if (across.length) rows.push(pickerRow(across, "cluepick:a", "Across — pick a clue…"));
+      if (down.length) rows.push(pickerRow(down, "cluepick:d", "Down — pick a clue…"));
+    }
+    rows.unshift(new ActionRowBuilder().addComponents(...buttons));
     return rows;
   };
 
@@ -125,6 +137,7 @@ export async function startBot() {
 
   // ---------- live board message per channel ----------
   const boards = new Map();
+  const celebrated = new Set(); // rooms whose completion we've already announced
   const editTimers = new Map();
   const scheduleEdit = (roomId) => {
     const msg = boards.get(roomId);
@@ -146,6 +159,23 @@ export async function startBot() {
 
   // Shared answer logic (used by /answer, the Answer modal, and the clue picker).
   async function applyAnswer(interaction, game, number, direction, word) {
+    const roomId = interaction.channelId;
+    if (game.mode === "normal") {
+      // Co-op fill: write the letters, never say whether they're right.
+      const res = game.fillClue(interaction.user.id, number, direction, word);
+      if (res.error === "no_clue") { await interaction.reply({ content: `There's no clue ${number} ${direction}.`, ephemeral: true }); return; }
+      if (res.error === "length") { await interaction.reply({ content: `Clue ${number} ${direction} is **${res.entry.length}** letters.`, ephemeral: true }); return; }
+      emitChange(roomId);
+      if (res.complete && !celebrated.has(roomId)) {
+        celebrated.add(roomId);
+        const who = [...game.contributors].map((id) => `<@${id}>`).join(", ");
+        await interaction.reply(`🎉 The grid is complete and **all correct**! Great teamwork${who ? `: ${who}` : ""}!`);
+      } else {
+        await interaction.reply({ content: `✏️ Filled **${number} ${direction}**.`, ephemeral: true });
+      }
+      return;
+    }
+    // Competitive: validate, lock, score.
     const res = game.submitAnswer(interaction.user.id, number, direction, word);
     if (res.error === "no_clue") {
       await interaction.reply({ content: `There's no clue ${number} ${direction}.`, ephemeral: true });
@@ -157,15 +187,16 @@ export async function startBot() {
       const extra = res.newlySolved.length > 1 ? ` (+${res.newlySolved.length - 1} crossing!)` : "";
       const done = res.complete ? "\n🎉 **Puzzle complete!**" : "";
       await interaction.reply(`✅ <@${interaction.user.id}> solved **${number} ${direction}** = **${res.entry.answer}** — +${res.entry.length}${extra}${done}`);
-      emitChange(interaction.channelId);
+      emitChange(roomId);
     }
   }
 
   // Generate a new puzzle and post a fresh board message (the latest board is
   // always at the bottom of the channel; live edits target it).
-  async function generateAndShow(channel, roomId, layoutName, difficulty = null) {
+  async function generateAndShow(channel, roomId, layoutName, difficulty = null, mode = "competitive") {
     const game = getGame(roomId);
-    game.newGame({ layoutName, difficulty });
+    game.newGame({ layoutName, difficulty, mode });
+    celebrated.delete(roomId);
     const msg = await channel.send(await boardPayload(game));
     boards.set(roomId, msg);
     emitChange(roomId);
@@ -185,8 +216,10 @@ export async function startBot() {
             await interaction.deferReply();
             const layout = interaction.options.getString("layout") || "Mini 5x5 - Open";
             const difficulty = interaction.options.getString("difficulty") || null;
-            const g = await generateAndShow(interaction.channel, roomId, layout, difficulty);
-            await interaction.editReply(`🧩 New **${g.puzzleFull.layoutName}** crossword posted below — answer with **✏️ Answer**.`);
+            const mode = interaction.options.getString("mode") || "normal";
+            const g = await generateAndShow(interaction.channel, roomId, layout, difficulty, mode);
+            const how = mode === "normal" ? "Fill it in together — **🔎 Autocheck** shows correct letters." : "Guess words for points.";
+            await interaction.editReply(`🧩 New **${g.puzzleFull.layoutName}** (${mode}) posted below. ${how}`);
             break;
           }
           case "answer": {
@@ -242,11 +275,21 @@ export async function startBot() {
           );
           await interaction.reply({ content: "Pick a layout for the new puzzle:", components: [row], ephemeral: true });
         } else if (interaction.customId === "browse") {
-          // Paginated clue picker for big grids: several dropdowns (≤25 each).
-          const unsolved = unsolvedEntries(game);
-          if (!unsolved.length) { await interaction.reply({ content: "All clues are solved! 🎉", ephemeral: true }); return; }
-          const rows = chunk(unsolved, 25).slice(0, 5).map((ch, i) => cluePickerRow(ch, `cluepick:${i}`));
-          await interaction.reply({ content: "Pick a clue to answer:", components: rows, ephemeral: true });
+          // Paginated, Across/Down-grouped clue picker for big grids.
+          const across = pickable(game, "across");
+          const down = pickable(game, "down");
+          if (!across.length && !down.length) { await interaction.reply({ content: "Nothing left to fill! 🎉", ephemeral: true }); return; }
+          const rows = [];
+          const addChunks = (list, prefix, label) =>
+            chunk(list, 25).forEach((ch, i) => rows.push(pickerRow(ch, `cluepick:${prefix}${i}`, `${label} (${ch[0].number}–${ch[ch.length - 1].number})`)));
+          addChunks(across, "a", "Across");
+          addChunks(down, "d", "Down");
+          await interaction.reply({ content: "Pick a clue to answer:", components: rows.slice(0, 5), ephemeral: true });
+        } else if (interaction.customId === "autocheck") {
+          game.setAutocheck(!game.autocheck);
+          await interaction.update(await boardPayload(game));
+          boards.set(roomId, interaction.message);
+          emitChange(roomId);
         }
         return;
       }
@@ -256,18 +299,19 @@ export async function startBot() {
         if (interaction.customId.startsWith("cluepick")) {
           const [num, dir] = interaction.values[0].split(":");
           const e = game.findEntry(Number(num), dir);
-          const modal = new ModalBuilder().setCustomId(`answword:${num}:${dir}`).setTitle(`${num} ${dir}`).addComponents(
-            new ActionRowBuilder().addComponents(
-              new TextInputBuilder().setCustomId("word")
-                .setLabel((e ? e.clue : "Your answer").slice(0, 45))
-                .setStyle(TextInputStyle.Short).setRequired(true),
-            ),
-          );
+          const pat = game.cluePattern(num, dir);
+          const placeholder = /[A-Z]/.test(pat) ? `So far: ${pat.replace(/·/g, "_")}` : `${e ? e.length : ""} letters`;
+          const wordInput = new TextInputBuilder().setCustomId("word")
+            .setLabel((e ? e.clue : "Your answer").slice(0, 45))
+            .setPlaceholder(placeholder.slice(0, 100))
+            .setStyle(TextInputStyle.Short).setRequired(true);
+          const modal = new ModalBuilder().setCustomId(`answword:${num}:${dir}`).setTitle(`${num} ${dir}`)
+            .addComponents(new ActionRowBuilder().addComponents(wordInput));
           await interaction.showModal(modal);
         } else if (interaction.customId === "newlayout") {
           await interaction.deferUpdate();
           const choice = interaction.values[0];
-          const g = await generateAndShow(interaction.channel, roomId, choice === "__random__" ? null : choice);
+          const g = await generateAndShow(interaction.channel, roomId, choice === "__random__" ? null : choice, null, game.mode);
           await interaction.editReply({ content: `🧩 New **${g.puzzleFull.layoutName}** posted below!`, components: [] });
         }
         return;
