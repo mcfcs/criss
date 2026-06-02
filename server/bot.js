@@ -65,20 +65,23 @@ export async function startBot() {
     const embed = new EmbedBuilder()
       .setTitle(`🧩 ${p.layoutName}${sub}`)
       .setColor(game.isComplete() ? 0x2ecc71 : 0x5865f2)
-      .addFields(
-        { name: "Across", value: trunc(renderClues(game, "across")), inline: true },
-        { name: "Down", value: trunc(renderClues(game, "down")), inline: true },
-        { name: "Scores", value: trunc(renderScores(game)) },
-      )
       .setFooter({ text: game.isComplete() ? "Solved! 🎉  /crossword for a new one" : "/answer  ·  /reveal  ·  /board" });
 
     const png = await renderBoardPNG(game).catch(() => null);
     if (png) {
-      embed.setDescription(renderProgress(game)).setImage("attachment://board.png");
+      // Clues are drawn into the image, so the embed stays clean.
+      embed.setDescription(renderProgress(game)).setImage("attachment://board.png")
+        .addFields({ name: "Scores", value: trunc(renderScores(game)) });
       return { embeds: [embed], files: [{ attachment: png, name: "board.png" }] };
     }
-    // Fallback: ASCII grid if image rendering isn't available.
-    embed.setDescription("```\n" + renderGrid(game) + "\n```\n" + renderProgress(game));
+    // Fallback: ASCII grid + text clue lists if image rendering isn't available.
+    embed
+      .setDescription("```\n" + renderGrid(game) + "\n```\n" + renderProgress(game))
+      .addFields(
+        { name: "Across", value: trunc(renderClues(game, "across")), inline: true },
+        { name: "Down", value: trunc(renderClues(game, "down")), inline: true },
+        { name: "Scores", value: trunc(renderScores(game)) },
+      );
     return { embeds: [embed], files: [] };
   };
 
