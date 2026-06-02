@@ -177,7 +177,7 @@ export async function startBot() {
     }
   });
 
-  client.once("ready", async (c) => {
+  client.once("clientReady", async (c) => {
     try {
       const guildId = process.env.DISCORD_GUILD_ID;
       if (guildId) await c.application.commands.set(commands, guildId); // instant in one guild
