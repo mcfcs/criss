@@ -39,8 +39,10 @@ export class Game {
     return !!this.puzzleFull;
   }
 
-  newGame({ layoutName = null, difficulty = null, mode = "competitive" } = {}) {
-    const full = makePuzzle({ layoutName, difficulty });
+  newGame({ layoutName = null, difficulty = null, mode = "competitive", puzzle = null } = {}) {
+    // `puzzle` lets callers load a prebuilt puzzle (e.g. imported from
+    // crosswithfriends); otherwise we generate one.
+    const full = puzzle || makePuzzle({ layoutName, difficulty });
     this.puzzleFull = full;
     this.w = full.width;
     this.h = full.height;

@@ -177,6 +177,29 @@ list is large for chat); the Activity is better for big grids.
 
 ---
 
+## Play real puzzles from crosswithfriends.com
+
+The bot can pull actual published crosswords (NYT Mini, USA Today, etc.) from
+[crosswithfriends.com](https://www.crosswithfriends.com) (a Down for a Cross
+deployment):
+
+- **`/search query:<text> [mode] [size]`** — searches the site's puzzle list and
+  shows a dropdown of matches; pick one and it loads into the channel as a board.
+
+How it works (`server/dfac.js`): the public `/api/puzzle_list` endpoint gives
+search results (title/author/size), but the **solution + clues are only served
+when you join a game over socket.io**. So to load a puzzle the bot creates a game
+(`POST /api/game`), connects to the realtime backend, runs
+`join_game` + `sync_all_game_events`, reads the `create` event (grid, solution,
+clues), and converts it to the internal puzzle format. The imported puzzle then
+plays through the same engine/modes as generated ones.
+
+> For personal play with friends — it fetches a single puzzle on demand (not in
+> bulk). The puzzles are third-party copyrighted content (NYT, USA Today, …);
+> please respect the source site's terms.
+
+---
+
 ## Deploying for real
 
 - **One-origin (simplest):** `npm run build` (outputs `client/dist`), then run

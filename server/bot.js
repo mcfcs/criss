@@ -6,6 +6,7 @@ import { getGame, emitChange, onChange } from "./gameStore.js";
 import { LAYOUTS } from "./crossword/layouts.js";
 import { renderGrid, renderClues, renderProgress, renderScores } from "./render.js";
 import { renderGridPNG, renderCluesPNG } from "./renderImage.js";
+import { searchPuzzles, fetchPuzzle } from "./dfac.js";
 
 const trunc = (s, n = 1024) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
@@ -56,6 +57,14 @@ export async function startBot() {
       .addStringOption(directionOpt),
     new SlashCommandBuilder().setName("board").setDescription("Show the current crossword"),
     new SlashCommandBuilder().setName("leaderboard").setDescription("Show the scores"),
+    new SlashCommandBuilder().setName("search").setDescription("Find a real crossword from crosswithfriends.com to play")
+      .addStringOption((o) => o.setName("query").setDescription("Title or author, e.g. 'monday' or 'mini'").setRequired(true))
+      .addStringOption((o) => o.setName("mode").setDescription("How to play").addChoices(
+        { name: "Normal", value: "normal" }, { name: "Competitive", value: "competitive" },
+      ))
+      .addStringOption((o) => o.setName("size").setDescription("Puzzle size").addChoices(
+        { name: "Mini", value: "mini" }, { name: "Standard", value: "standard" }, { name: "Any", value: "any" },
+      )),
   ].map((c) => c.toJSON());
 
   // ---------- board rendering + interactive components ----------
@@ -203,6 +212,17 @@ export async function startBot() {
     return game;
   }
 
+  // Post a board for a prebuilt (e.g. imported) puzzle.
+  async function showPuzzle(channel, roomId, puzzle, mode) {
+    const game = getGame(roomId);
+    game.newGame({ puzzle, mode });
+    celebrated.delete(roomId);
+    const msg = await channel.send(await boardPayload(game));
+    boards.set(roomId, msg);
+    emitChange(roomId);
+    return game;
+  }
+
   // ---------- interaction routing ----------
   client.on("interactionCreate", async (interaction) => {
     const roomId = interaction.channelId;
@@ -246,6 +266,28 @@ export async function startBot() {
             const embed = new EmbedBuilder().setTitle("🏆 Scores").setColor(0xf2c14e)
               .setDescription(renderScores(game) + "\n\n" + renderProgress(game));
             await interaction.reply({ embeds: [embed] });
+            break;
+          }
+          case "search": {
+            await interaction.deferReply({ ephemeral: true });
+            const q = interaction.options.getString("query");
+            const mode = interaction.options.getString("mode") || "normal";
+            const size = interaction.options.getString("size") || "any";
+            let results;
+            try {
+              results = await searchPuzzles(q, { mini: size !== "standard", standard: size !== "mini", pageSize: 25 });
+            } catch (e) {
+              await interaction.editReply(`Search failed: ${e.message}`);
+              break;
+            }
+            if (!results.length) { await interaction.editReply(`No puzzles found for “${q}”.`); break; }
+            const menu = new StringSelectMenuBuilder().setCustomId(`pickpuzzle:${mode}`).setPlaceholder("Pick a puzzle to play…")
+              .addOptions(results.slice(0, 25).map((r) => ({
+                label: r.title.slice(0, 100),
+                description: `${r.size}${r.author ? " · " + r.author : ""}`.slice(0, 100),
+                value: r.pid,
+              })));
+            await interaction.editReply({ content: `Found ${results.length} puzzle(s) for “${q}”. Pick one (${mode} mode):`, components: [new ActionRowBuilder().addComponents(menu)] });
             break;
           }
         }
@@ -313,6 +355,18 @@ export async function startBot() {
           const choice = interaction.values[0];
           const g = await generateAndShow(interaction.channel, roomId, choice === "__random__" ? null : choice, null, game.mode);
           await interaction.editReply({ content: `🧩 New **${g.puzzleFull.layoutName}** posted below!`, components: [] });
+        } else if (interaction.customId.startsWith("pickpuzzle")) {
+          // Load a real puzzle from crosswithfriends (fetch can take a few sec).
+          await interaction.deferUpdate();
+          const mode = interaction.customId.split(":")[1] || "normal";
+          const pid = interaction.values[0];
+          try {
+            const puzzle = await fetchPuzzle(pid);
+            await showPuzzle(interaction.channel, roomId, puzzle, mode);
+            await interaction.editReply({ content: `🧩 Loaded **${puzzle.layoutName.replace(/^cwf:/, "")}** — posted below.`, components: [] });
+          } catch (e) {
+            await interaction.editReply({ content: `Couldn't load that puzzle: ${e.message}`, components: [] });
+          }
         }
         return;
       }
