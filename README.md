@@ -116,9 +116,32 @@ Put the resulting `https://….trycloudflare.com` URL into the **URL Mapping**
 from step 2.
 
 ### 5. Launch it
-In a Discord **voice channel**, open the **Activities (🚀)** picker → your app.
-Friends in the channel join the same board. (Activities can also be launched in
-text channels / DMs depending on your app's settings.)
+First, make the unpublished Activity visible **in the Discord desktop client**:
+**User Settings → Advanced → enable Developer Mode**, then enable
+**Activities (Application Test Mode)**, paste your **Application ID**, and click
+**Activate**. (Being an App Tester in the portal is not enough on its own.)
+
+Then in a **voice channel**, open the **Activities (🚀)** picker → your app.
+Friends in the channel join the same board. Unverified activities can only be
+launched in servers with **fewer than 25 members**.
+
+If the app appears but has **no Launch button**, your app is missing its default
+**Entry Point command** — enabling Activities usually creates one; if not, add it
+via the portal (Activities settings) or the API.
+
+### Stable tunnel URL (optional)
+`npm run tunnel` (or `cloudflared tunnel --url http://localhost:3001`) gives a
+**random** `*.trycloudflare.com` URL each run, so you must re-paste it into the
+Discord URL Mapping every time. To stop re-pasting, pick one:
+
+- **ngrok static domain (no domain of your own needed):** sign up, then
+  `ngrok config add-authtoken <token>` and
+  `ngrok http 3001 --domain=your-name.ngrok-free.app`. Free tier includes one
+  reserved domain — paste it into the URL Mapping once.
+- **Named Cloudflare tunnel (needs a domain on Cloudflare):**
+  `cloudflared tunnel login`, `cloudflared tunnel create criss`,
+  `cloudflared tunnel route dns criss criss.yourdomain.com`, then run it with a
+  config pointing at `http://localhost:3001`. Stable URL, no re-pasting.
 
 ---
 
