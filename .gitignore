@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+
+# Large datasets are not committed — see README for how to provide clues.csv.
+server/data/clues.csv
+server/data/nytcrosswordspure.csv
+server/data/*.ipynb

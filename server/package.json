@@ -1,0 +1,16 @@
+{
+  "name": "criss-server",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Authoritative realtime server + crossword generator for the criss Discord crossword game.",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

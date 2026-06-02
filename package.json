@@ -1,0 +1,13 @@
+{
+  "name": "criss",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A Discord crossword game you play with friends — generates crosswords from a dataset and runs as a Discord Activity (Embedded App).",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start"
+  }
+}
