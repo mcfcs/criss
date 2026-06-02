@@ -7,7 +7,11 @@ function Grid({ puzzle, index, fills, solvedCells, selected, currentCells, onCel
       className="grid"
       style={{
         gridTemplateColumns: `repeat(${width}, 1fr)`,
+        gridTemplateRows: `repeat(${height}, 1fr)`,
         aspectRatio: `${width} / ${height}`,
+        containerType: "inline-size",
+        // 1cqw = 1% of grid width, so this equals the exact cell width in px.
+        "--cell": `${100 / width}cqw`,
       }}
     >
       {Array.from({ length: height }).map((_, r) =>
