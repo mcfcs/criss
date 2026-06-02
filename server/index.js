@@ -88,6 +88,29 @@ const broadcast = (roomId, obj) => {
 };
 const broadcastState = (roomId) => broadcast(roomId, getGame(roomId).publicState());
 
+// Generate a new puzzle for a room. Announces "generating" first (so clients
+// can show a loading screen), then generates on the next tick so that frame
+// flushes before the CPU-bound fill. Broadcasts "gen_error" on failure so
+// clients can retry.
+function startGeneration(roomId, opts) {
+  const game = getGame(roomId);
+  if (game.generating) return;
+  game.generating = true;
+  broadcast(roomId, { type: "generating", layout: opts.layoutName || "random", difficulty: opts.difficulty || null });
+  setImmediate(() => {
+    try {
+      game.newGame(opts);
+    } catch (e) {
+      game.generating = false;
+      console.error("[criss] generation failed:", e);
+      broadcast(roomId, { type: "gen_error", message: String(e) });
+      return;
+    }
+    game.generating = false;
+    broadcastState(roomId);
+  });
+}
+
 wss.on("connection", (ws) => {
   ws.connId = connSeq++;
   ws.roomId = null;
@@ -132,26 +155,16 @@ function handle(ws, msg) {
         id: msg.user?.id || `guest-${ws.connId}`,
         username: msg.user?.username || `Guest ${ws.connId}`,
       });
-      // Auto-start a quick game if the room is empty so there's always a board.
-      if (!game.hasPuzzle()) {
-        try {
-          game.newGame({ layoutName: msg.layout || "Mini 5x5 - Open", difficulty: msg.difficulty || null });
-        } catch (e) {
-          send(ws, { type: "error", message: String(e) });
-        }
-      }
       broadcastState(roomId);
+      // Auto-start a quick game if the room is empty so there's always a board.
+      if (!game.hasPuzzle() && !game.generating) {
+        startGeneration(roomId, { layoutName: msg.layout || "Mini 5x5 - Open", difficulty: msg.difficulty || null });
+      }
       break;
     }
     case "new_game": {
       if (!ws.roomId) return;
-      const game = getGame(ws.roomId);
-      try {
-        game.newGame({ layoutName: msg.layout || null, difficulty: msg.difficulty || null });
-        broadcastState(ws.roomId);
-      } catch (e) {
-        send(ws, { type: "error", message: String(e) });
-      }
+      startGeneration(ws.roomId, { layoutName: msg.layout || null, difficulty: msg.difficulty || null });
       break;
     }
     case "input": {

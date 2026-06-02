@@ -22,6 +22,7 @@ export class Game {
     this.solvedCells = new Set(); // "r,c" (locked, correct)
     this.scores = new Map(); // userId -> points
     this.startedAt = null;
+    this.generating = false; // a puzzle is currently being generated
   }
 
   addPlayer(connId, user) {
@@ -118,6 +119,7 @@ export class Game {
       puzzle: this.puzzleFull
         ? {
             layoutName: this.puzzleFull.layoutName,
+            requestedLayout: this.puzzleFull.requestedLayout || null,
             width: this.w,
             height: this.h,
             layout: this.layout,

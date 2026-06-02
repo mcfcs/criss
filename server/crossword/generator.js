@@ -409,5 +409,6 @@ export function generatePuzzle({
       if (best.entries.length >= targetWords) break;
     }
   }
+  if (best && !best.layoutName) best.layoutName = "Freeform";
   return best;
 }

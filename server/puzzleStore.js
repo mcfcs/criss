@@ -40,14 +40,51 @@ let seedCounter = 1;
 /**
  * Make a puzzle. Returns the FULL puzzle (entries include `answer`); the
  * server keeps it and sanitizes before sending to clients.
+ *
+ * Difficulty is best-effort: a single difficulty often can't fill a dense
+ * 15x15 quickly, so we try it briefly, then drop it (keeping the chosen
+ * layout), then try same-size sibling templates, then organic. This keeps the
+ * player's layout when possible and never produces a broken board.
+ * `requestedLayout` lets the UI note when we had to substitute the layout.
  */
 export function makePuzzle({ layoutName = null, difficulty = null } = {}) {
   loadPool();
   const seed = (seedCounter = (seedCounter * 1103515245 + 12345) & 0x7fffffff);
-  const layout = layoutName ? getLayout(layoutName) : null;
-  const puzzle = generatePuzzle({ pool, layout, difficulty, seed, timeBudgetMs: 2500 });
-  if (!puzzle) throw new Error("Failed to generate a puzzle");
-  return puzzle;
+
+  const target = layoutName ? getLayout(layoutName) : pickRandomLayout(seed);
+  const siblings = target ? LAYOUTS.filter((l) => l.size === target.size && l.name !== target.name) : [];
+
+  // Short budgets: fillable templates fill in <60ms, so anything that doesn't
+  // resolve quickly (e.g. "Open 15x15") fails fast and we move on.
+  const attempts = [];
+  if (target) {
+    if (difficulty) attempts.push({ layout: target, difficulty, budget: 500 }); // chosen layout + difficulty
+    attempts.push({ layout: target, difficulty: null, budget: 400 }); // chosen layout, any words
+    for (const s of siblings) attempts.push({ layout: s, difficulty: null, budget: 400 }); // other templates
+  }
+
+  for (const a of attempts) {
+    const p = generatePuzzle({
+      pool,
+      layout: a.layout,
+      difficulty: a.difficulty,
+      seed,
+      timeBudgetMs: a.budget,
+      fallbackOrganic: false,
+    });
+    if (p) return { ...p, requestedLayout: layoutName || null };
+  }
+
+  // Organic always succeeds — prefer difficulty, fall back to any words.
+  const organic =
+    generatePuzzle({ pool, difficulty, seed, fallbackOrganic: false }) ||
+    generatePuzzle({ pool, seed, fallbackOrganic: true });
+  if (!organic) throw new Error("Failed to generate a puzzle");
+  return { ...organic, requestedLayout: layoutName || null };
+}
+
+function pickRandomLayout(seed) {
+  return LAYOUTS[Math.abs(seed) % LAYOUTS.length];
 }
 
 export function layoutCatalog() {

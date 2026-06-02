@@ -319,6 +319,54 @@ button.ghost {
   color: #54d58a;
 }
 
+/* loading overlay */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 14, 0.72);
+  backdrop-filter: blur(2px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 50;
+}
+.overlay-text {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  margin: 0;
+}
+.spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* substitution note */
+.note {
+  background: #2a2418;
+  border: 1px solid #5a4a22;
+  color: #f0d9a8;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  text-align: center;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* responsive: stack for Discord panel / mobile */
 @media (max-width: 820px) {
   .play {

@@ -23,8 +23,11 @@ export default function App() {
   const [layout, setLayout] = useState("");
   const [difficulty, setDifficulty] = useState("");
   const [now, setNow] = useState(Date.now());
+  const [generating, setGenerating] = useState(false);
   const stateAtRef = useRef(Date.now());
   const netRef = useRef(null);
+  const lastGameRef = useRef({ layout: "", difficulty: "" });
+  const retriesRef = useRef(0);
 
   // ---- boot: session + websocket ----
   useEffect(() => {
@@ -38,8 +41,28 @@ export default function App() {
           onState: (m) => {
             stateAtRef.current = Date.now();
             setState(m);
+            if (m.puzzle) {
+              setGenerating(false);
+              retriesRef.current = 0;
+            }
           },
-          onError: (msg) => setError(msg),
+          onError: (msg) => {
+            setGenerating(false);
+            setError(msg);
+          },
+          onSignal: (m) => {
+            if (m.type === "generating") {
+              setGenerating(true);
+            } else if (m.type === "gen_error") {
+              if (retriesRef.current < 3) {
+                retriesRef.current += 1;
+                setTimeout(() => netRef.current?.send({ type: "new_game", ...lastGameRef.current }), 600);
+              } else {
+                setGenerating(false);
+                setError("Couldn't generate a puzzle for that layout/difficulty. Try another.");
+              }
+            }
+          },
         });
         netRef.current = net;
       })
@@ -56,6 +79,15 @@ export default function App() {
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, []);
+
+  // ---- watchdog: if generation stalls, retry once ----
+  useEffect(() => {
+    if (!generating) return;
+    const t = setTimeout(() => {
+      netRef.current?.send({ type: "new_game", ...lastGameRef.current });
+    }, 12000);
+    return () => clearTimeout(t);
+  }, [generating]);
 
   const puzzle = state?.puzzle || null;
   const index = useMemo(() => (puzzle ? indexPuzzle(puzzle) : null), [puzzle]);
@@ -98,6 +130,13 @@ export default function App() {
 
   // ---- interaction helpers ----
   const send = (obj) => netRef.current?.send(obj);
+
+  const requestNewGame = useCallback((opts) => {
+    lastGameRef.current = opts;
+    retriesRef.current = 0;
+    setGenerating(true);
+    netRef.current?.send({ type: "new_game", layout: opts.layout, difficulty: opts.difficulty });
+  }, []);
 
   const selectCell = useCallback(
     (r, c) => {
@@ -249,8 +288,8 @@ export default function App() {
               </option>
             ))}
           </select>
-          <button className="primary" onClick={() => send({ type: "new_game", layout, difficulty })}>
-            New puzzle
+          <button className="primary" disabled={generating} onClick={() => requestNewGame({ layout, difficulty })}>
+            {generating ? "Generating…" : "New puzzle"}
           </button>
         </div>
       </header>
@@ -282,6 +321,12 @@ export default function App() {
                 <span className="muted">Pick a clue to start</span>
               )}
             </div>
+            {puzzle.requestedLayout && puzzle.requestedLayout !== puzzle.layoutName && (
+              <div className="note">
+                “{puzzle.requestedLayout}” couldn’t be filled with these words — showing{" "}
+                <strong>{puzzle.layoutName}</strong> instead.
+              </div>
+            )}
             {state.complete && (
               <div className="win">🎉 Solved in {Math.floor(elapsed / 1000)}s — nice work!</div>
             )}
@@ -303,10 +348,17 @@ export default function App() {
         <div className="center grow">
           <div className="card">
             <p className="muted">No puzzle yet.</p>
-            <button className="primary" onClick={() => send({ type: "new_game", layout, difficulty })}>
+            <button className="primary" disabled={generating} onClick={() => requestNewGame({ layout, difficulty })}>
               Start a puzzle
             </button>
           </div>
+        </div>
+      )}
+
+      {generating && (
+        <div className="overlay">
+          <div className="spinner" />
+          <p className="overlay-text">Generating puzzle…</p>
         </div>
       )}
     </div>

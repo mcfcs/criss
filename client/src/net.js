@@ -1,7 +1,7 @@
 // Thin WebSocket client with auto-reconnect. Same-origin /ws (proxied to the
 // game server in dev, routed by the Activity URL mapping in Discord).
 
-export function connect({ room, user, onState, onError }) {
+export function connect({ room, user, onState, onError, onSignal }) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const url = `${proto}://${location.host}/ws`;
   let ws;
@@ -19,6 +19,7 @@ export function connect({ room, user, onState, onError }) {
       }
       if (m.type === "state") onState(m);
       else if (m.type === "error") onError?.(m.message);
+      else onSignal?.(m); // generating, gen_error, pong, …
     };
     ws.onclose = () => {
       if (!closed) setTimeout(open, 1000);
