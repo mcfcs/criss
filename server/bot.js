@@ -55,26 +55,33 @@ export async function startBot() {
   ].map((c) => c.toJSON());
 
   // ---------- board rendering + interactive components ----------
-  // Board buttons + clue picker (layout change lives behind the New button).
+  const unsolvedEntries = (game) =>
+    game.hasPuzzle() ? game.puzzleFull.entries.filter((e) => !game.solved.has(`${e.direction}-${e.number}`)) : [];
+  const optionLabel = (e) =>
+    `${e.number}${e.direction === "across" ? "A" : "D"} · ${e.clue} (${e.length})`.slice(0, 100);
+  const cluePickerRow = (entries, id) =>
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId(id).setPlaceholder("Pick a clue to answer…")
+        .addOptions(entries.slice(0, 25).map((e) => ({ label: optionLabel(e), value: `${e.number}:${e.direction}` }))),
+    );
+  const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+
+  // Board buttons + clue picker. Big grids (>25 clues) get a 📋 button that
+  // opens an ephemeral, paginated picker instead of an inline dropdown.
   const buildComponents = (game) => {
-    const rows = [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("answer").setLabel("Answer").setEmoji("✏️").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("new").setLabel("New puzzle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
-      ),
+    const buttons = [
+      new ButtonBuilder().setCustomId("answer").setLabel("Answer").setEmoji("✏️").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("new").setLabel("New puzzle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
     ];
-    if (game.hasPuzzle()) {
-      const unsolved = game.puzzleFull.entries.filter((e) => !game.solved.has(`${e.direction}-${e.number}`));
-      if (unsolved.length && unsolved.length <= 25) {
-        rows.push(new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder().setCustomId("cluepick").setPlaceholder("Pick a clue to answer…")
-            .addOptions(unsolved.slice(0, 25).map((e) => ({
-              label: `${e.number}${e.direction === "across" ? "A" : "D"} · ${e.clue}`.slice(0, 100),
-              value: `${e.number}:${e.direction}`,
-            }))),
-        ));
-      }
+    const unsolved = unsolvedEntries(game);
+    let pickerRow = null;
+    if (unsolved.length > 25) {
+      buttons.push(new ButtonBuilder().setCustomId("browse").setLabel("Pick a clue").setEmoji("📋").setStyle(ButtonStyle.Secondary));
+    } else if (unsolved.length > 0) {
+      pickerRow = cluePickerRow(unsolved, "cluepick:0");
     }
+    const rows = [new ActionRowBuilder().addComponents(...buttons)];
+    if (pickerRow) rows.push(pickerRow);
     return rows;
   };
 
@@ -234,13 +241,19 @@ export async function startBot() {
             ),
           );
           await interaction.reply({ content: "Pick a layout for the new puzzle:", components: [row], ephemeral: true });
+        } else if (interaction.customId === "browse") {
+          // Paginated clue picker for big grids: several dropdowns (≤25 each).
+          const unsolved = unsolvedEntries(game);
+          if (!unsolved.length) { await interaction.reply({ content: "All clues are solved! 🎉", ephemeral: true }); return; }
+          const rows = chunk(unsolved, 25).slice(0, 5).map((ch, i) => cluePickerRow(ch, `cluepick:${i}`));
+          await interaction.reply({ content: "Pick a clue to answer:", components: rows, ephemeral: true });
         }
         return;
       }
 
       // ----- select menus -----
       if (interaction.isStringSelectMenu()) {
-        if (interaction.customId === "cluepick") {
+        if (interaction.customId.startsWith("cluepick")) {
           const [num, dir] = interaction.values[0].split(":");
           const e = game.findEntry(Number(num), dir);
           const modal = new ModalBuilder().setCustomId(`answword:${num}:${dir}`).setTitle(`${num} ${dir}`).addComponents(

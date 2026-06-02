@@ -110,7 +110,7 @@ function columnLines(ctx, game, direction, maxWidth, fontSize) {
   const lines = [{ kind: "header", text: direction === "across" ? "ACROSS" : "DOWN" }];
   for (const e of game.puzzleFull.entries.filter((x) => x.direction === direction)) {
     const solved = game.solved.has(`${e.direction}-${e.number}`);
-    wrapText(ctx, `${e.number}. ${e.clue}`, maxWidth).forEach((t, i) =>
+    wrapText(ctx, `${e.number}. ${e.clue} (${e.length})`, maxWidth).forEach((t, i) =>
       lines.push({ kind: "clue", text: i === 0 ? t : "    " + t, solved }),
     );
   }
