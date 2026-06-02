@@ -181,11 +181,11 @@ export class Game {
     this.autocheck = !!on;
   }
 
-  /** Whether a clue should be dropped from the picker. Competitive: solved.
-   *  Normal: fully filled (don't re-offer, but don't reveal correctness). */
+  /** Whether a clue should be dropped from the picker.
+   *  Competitive: drop solved clues (they're locked).
+   *  Normal: never drop — answers can always be replaced. */
   pickerExclude(e) {
-    const cells = cellsOf(e);
-    if (this.mode === "normal") return cells.every(([r, c]) => this.fills[r][c]);
+    if (this.mode === "normal") return false;
     return this.solved.has(`${e.direction}-${e.number}`);
   }
 
