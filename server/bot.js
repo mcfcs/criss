@@ -5,7 +5,7 @@
 import { getGame, emitChange, onChange } from "./gameStore.js";
 import { LAYOUTS } from "./crossword/layouts.js";
 import { renderGrid, renderClues, renderProgress, renderScores } from "./render.js";
-import { renderBoardPNG } from "./renderImage.js";
+import { renderGridPNG, renderCluesPNG } from "./renderImage.js";
 
 const trunc = (s, n = 1024) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
@@ -55,12 +55,14 @@ export async function startBot() {
   ].map((c) => c.toJSON());
 
   // ---------- board rendering + interactive components ----------
+  // Board buttons + clue picker (layout change lives behind the New button).
   const buildComponents = (game) => {
-    const rows = [];
-    rows.push(new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("answer").setLabel("Answer").setEmoji("✏️").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("new").setLabel("New").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
-    ));
+    const rows = [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("answer").setLabel("Answer").setEmoji("✏️").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("new").setLabel("New puzzle").setEmoji("🔀").setStyle(ButtonStyle.Secondary),
+      ),
+    ];
     if (game.hasPuzzle()) {
       const unsolved = game.puzzleFull.entries.filter((e) => !game.solved.has(`${e.direction}-${e.number}`));
       if (unsolved.length && unsolved.length <= 25) {
@@ -73,36 +75,45 @@ export async function startBot() {
         ));
       }
     }
-    rows.push(new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId("layoutpick").setPlaceholder("Change layout (starts a new puzzle)…")
-        .addOptions(LAYOUTS.slice(0, 25).map((l) => ({ label: l.name, value: l.name }))),
-    ));
     return rows;
   };
 
   const boardPayload = async (game) => {
     const p = game.puzzleFull;
     if (!p) {
-      return { content: "No puzzle yet — press **🔀 New** or use `/crossword`.", components: buildComponents(game) };
+      return { content: "No puzzle yet — press **🔀 New puzzle** or use `/crossword`.", embeds: [], files: [], components: buildComponents(game) };
     }
     const sub = p.requestedLayout && p.requestedLayout !== p.layoutName ? ` (couldn't fill ${p.requestedLayout})` : "";
+    const components = buildComponents(game);
+    const gridPng = await renderGridPNG(game).catch(() => null);
+    if (gridPng) {
+      const e1 = new EmbedBuilder()
+        .setTitle(`🧩 ${p.layoutName}${sub}`)
+        .setColor(game.isComplete() ? 0x2ecc71 : 0x5865f2)
+        .setDescription(renderProgress(game))
+        .setImage("attachment://grid.png")
+        .addFields({ name: "Scores", value: trunc(renderScores(game)) })
+        .setFooter({ text: game.isComplete() ? "Solved! 🎉" : "✏️ Answer · pick a clue below · 🔀 New puzzle" });
+      const embeds = [e1];
+      const files = [{ attachment: gridPng, name: "grid.png" }];
+      const cluesPng = await renderCluesPNG(game).catch(() => null);
+      if (cluesPng) {
+        embeds.push(new EmbedBuilder().setColor(0x5865f2).setImage("attachment://clues.png"));
+        files.push({ attachment: cluesPng, name: "clues.png" });
+      }
+      return { content: "", embeds, files, components };
+    }
+    // Fallback: ASCII grid + text clue lists if image rendering isn't available.
     const embed = new EmbedBuilder()
       .setTitle(`🧩 ${p.layoutName}${sub}`)
       .setColor(game.isComplete() ? 0x2ecc71 : 0x5865f2)
-      .setFooter({ text: game.isComplete() ? "Solved! 🎉" : "✏️ Answer · pick a clue below · 🔀 New" });
-    const components = buildComponents(game);
-    const png = await renderBoardPNG(game).catch(() => null);
-    if (png) {
-      embed.setDescription(renderProgress(game)).setImage("attachment://board.png")
-        .addFields({ name: "Scores", value: trunc(renderScores(game)) });
-      return { embeds: [embed], files: [{ attachment: png, name: "board.png" }], components };
-    }
-    embed.setDescription("```\n" + renderGrid(game) + "\n```\n" + renderProgress(game)).addFields(
-      { name: "Across", value: trunc(renderClues(game, "across")), inline: true },
-      { name: "Down", value: trunc(renderClues(game, "down")), inline: true },
-      { name: "Scores", value: trunc(renderScores(game)) },
-    );
-    return { embeds: [embed], files: [], components };
+      .setDescription("```\n" + renderGrid(game) + "\n```\n" + renderProgress(game))
+      .addFields(
+        { name: "Across", value: trunc(renderClues(game, "across")), inline: true },
+        { name: "Down", value: trunc(renderClues(game, "down")), inline: true },
+        { name: "Scores", value: trunc(renderScores(game)) },
+      );
+    return { content: "", embeds: [embed], files: [], components };
   };
 
   // ---------- live board message per channel ----------
@@ -143,11 +154,15 @@ export async function startBot() {
     }
   }
 
-  async function startNewBoard(interaction, game, layoutName, difficulty = null) {
+  // Generate a new puzzle and post a fresh board message (the latest board is
+  // always at the bottom of the channel; live edits target it).
+  async function generateAndShow(channel, roomId, layoutName, difficulty = null) {
+    const game = getGame(roomId);
     game.newGame({ layoutName, difficulty });
-    await interaction.editReply(await boardPayload(game));
-    boards.set(interaction.channelId, interaction.message);
-    emitChange(interaction.channelId);
+    const msg = await channel.send(await boardPayload(game));
+    boards.set(roomId, msg);
+    emitChange(roomId);
+    return game;
   }
 
   // ---------- interaction routing ----------
@@ -163,11 +178,8 @@ export async function startBot() {
             await interaction.deferReply();
             const layout = interaction.options.getString("layout") || "Mini 5x5 - Open";
             const difficulty = interaction.options.getString("difficulty") || null;
-            game.newGame({ layoutName: layout, difficulty });
-            const msg = await interaction.channel.send(await boardPayload(game));
-            boards.set(roomId, msg);
-            await interaction.editReply(`🧩 New **${game.puzzleFull.layoutName}** crossword below — answer with the **✏️ Answer** button.`);
-            emitChange(roomId);
+            const g = await generateAndShow(interaction.channel, roomId, layout, difficulty);
+            await interaction.editReply(`🧩 New **${g.puzzleFull.layoutName}** crossword posted below — answer with **✏️ Answer**.`);
             break;
           }
           case "answer": {
@@ -214,8 +226,14 @@ export async function startBot() {
           );
           await interaction.showModal(modal);
         } else if (interaction.customId === "new") {
-          await interaction.deferUpdate();
-          await startNewBoard(interaction, game, game.puzzleFull?.requestedLayout || "Mini 5x5 - Open");
+          // Prompt for a layout (ephemeral) instead of a permanent dropdown.
+          const row = new ActionRowBuilder().addComponents(
+            new StringSelectMenuBuilder().setCustomId("newlayout").setPlaceholder("Choose a layout…").addOptions(
+              { label: "🎲 Random", value: "__random__" },
+              ...LAYOUTS.slice(0, 24).map((l) => ({ label: l.name, value: l.name })),
+            ),
+          );
+          await interaction.reply({ content: "Pick a layout for the new puzzle:", components: [row], ephemeral: true });
         }
         return;
       }
@@ -233,9 +251,11 @@ export async function startBot() {
             ),
           );
           await interaction.showModal(modal);
-        } else if (interaction.customId === "layoutpick") {
+        } else if (interaction.customId === "newlayout") {
           await interaction.deferUpdate();
-          await startNewBoard(interaction, game, interaction.values[0]);
+          const choice = interaction.values[0];
+          const g = await generateAndShow(interaction.channel, roomId, choice === "__random__" ? null : choice);
+          await interaction.editReply({ content: `🧩 New **${g.puzzleFull.layoutName}** posted below!`, components: [] });
         }
         return;
       }
