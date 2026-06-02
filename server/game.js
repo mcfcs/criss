@@ -85,6 +85,45 @@ export class Game {
     return null;
   }
 
+  /** Find an entry by clue number + direction. */
+  findEntry(number, direction) {
+    if (!this.puzzleFull) return null;
+    return this.puzzleFull.entries.find((e) => e.number === Number(number) && e.direction === direction) || null;
+  }
+
+  /**
+   * Submit a whole-word answer for a clue (the natural input for a bot).
+   * Correct → fills + locks the clue, credits the player, detects crossings/win.
+   * Wrong → nothing changes.
+   */
+  submitAnswer(userId, number, direction, word) {
+    const e = this.findEntry(number, direction);
+    if (!e) return { error: "no_clue" };
+    const id = `${e.direction}-${e.number}`;
+    if (this.solved.has(id)) return { alreadySolved: true, entry: e };
+    const guess = String(word || "").toUpperCase().replace(/[^A-Z]/g, "");
+    if (guess.length !== e.length) return { correct: false, entry: e, reason: "length" };
+    if (guess !== e.answer) return { correct: false, entry: e };
+    // Correct: write the letters, then let #checkSolves credit this clue and
+    // any crossing clue it completes.
+    const cells = cellsOf(e);
+    for (let i = 0; i < cells.length; i++) {
+      const [r, c] = cells[i];
+      if (!this.solvedCells.has(`${r},${c}`)) this.fills[r][c] = e.answer[i];
+    }
+    let newly = [];
+    for (const [r, c] of cells) newly = newly.concat(this.#checkSolves(userId, r, c));
+    return { correct: true, entry: e, newlySolved: [...new Set(newly)], complete: this.isComplete() };
+  }
+
+  /** Reveal an entire clue's letters (no points awarded). */
+  revealClue(number, direction) {
+    const e = this.findEntry(number, direction);
+    if (!e) return { error: "no_clue" };
+    for (const [r, c] of cellsOf(e)) this.reveal(r, c);
+    return { entry: e, complete: this.isComplete() };
+  }
+
   #checkSolves(userId, r, c) {
     const newly = [];
     for (const e of this.puzzleFull.entries) {

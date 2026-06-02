@@ -11,8 +11,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { WebSocketServer } from "ws";
-import { Game } from "./game.js";
+import { getGame, dropGame, onChange, emitChange } from "./gameStore.js";
 import { loadPool, layoutCatalog } from "./puzzleStore.js";
+import { startBot } from "./bot.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Load the repo-root .env first, then a server/.env if present (local wins).
@@ -65,14 +66,9 @@ const server = http.createServer(app);
 
 // ===================== Realtime layer =====================
 const wss = new WebSocketServer({ server, path: "/ws" });
-const games = new Map(); // roomId -> Game
 const sockets = new Map(); // roomId -> Set<ws>
 let connSeq = 1;
 
-const getGame = (roomId) => {
-  if (!games.has(roomId)) games.set(roomId, new Game(roomId));
-  return games.get(roomId);
-};
 const roomSet = (roomId) => {
   if (!sockets.has(roomId)) sockets.set(roomId, new Set());
   return sockets.get(roomId);
@@ -87,6 +83,10 @@ const broadcast = (roomId, obj) => {
   for (const ws of s) if (ws.readyState === ws.OPEN) ws.send(msg);
 };
 const broadcastState = (roomId) => broadcast(roomId, getGame(roomId).publicState());
+
+// Any game mutation (from a WS client OR the bot) refreshes connected Activity
+// clients. The bot subscribes separately to edit its message.
+onChange((roomId) => broadcastState(roomId));
 
 // Generate a new puzzle for a room. Announces "generating" first (so clients
 // can show a loading screen), then generates on the next tick so that frame
@@ -107,7 +107,7 @@ function startGeneration(roomId, opts) {
       return;
     }
     game.generating = false;
-    broadcastState(roomId);
+    emitChange(roomId);
   });
 }
 
@@ -127,19 +127,14 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     if (!ws.roomId) return;
-    const game = games.get(ws.roomId);
-    if (game) game.removePlayer(ws.connId);
+    getGame(ws.roomId).removePlayer(ws.connId);
     const s = sockets.get(ws.roomId);
     if (s) {
       s.delete(ws);
-      if (s.size === 0) {
-        // Last player left: drop the room to free memory.
-        sockets.delete(ws.roomId);
-        games.delete(ws.roomId);
-        return;
-      }
+      if (s.size === 0) sockets.delete(ws.roomId);
     }
-    broadcastState(ws.roomId);
+    // Keep the game in the store (the bot may still be playing this channel).
+    emitChange(ws.roomId);
   });
 });
 
@@ -169,19 +164,17 @@ function handle(ws, msg) {
     }
     case "input": {
       if (!ws.roomId) return;
-      const game = games.get(ws.roomId);
-      const player = game?.players.get(ws.connId);
-      if (!game || !player) return;
+      const game = getGame(ws.roomId);
+      const player = game.players.get(ws.connId);
+      if (!player) return;
       const res = game.applyInput(player.id, msg.row, msg.col, msg.letter);
-      if (res) broadcastState(ws.roomId);
+      if (res) emitChange(ws.roomId);
       break;
     }
     case "reveal": {
       if (!ws.roomId) return;
-      const game = games.get(ws.roomId);
-      if (!game) return;
-      const res = game.reveal(msg.row, msg.col);
-      if (res) broadcastState(ws.roomId);
+      const res = getGame(ws.roomId).reveal(msg.row, msg.col);
+      if (res) emitChange(ws.roomId);
       break;
     }
     case "ping":
@@ -198,3 +191,6 @@ server.listen(PORT, () => {
   console.log(`[criss] server listening on http://localhost:${PORT}`);
   console.log(`[criss] websocket on ws://localhost:${PORT}/ws`);
 });
+
+// Optional Discord bot — only starts if DISCORD_BOT_TOKEN is set.
+startBot().catch((e) => console.error("[bot] failed to start:", e));

@@ -55,7 +55,8 @@ export async function initSession() {
       id: auth.user.id,
       username: auth.user.global_name || auth.user.username,
     },
-    // Everyone in the same Activity instance shares a board.
-    room: sdk.instanceId,
+    // Key the room by channel so the Activity and the bot share one game per
+    // channel. Fall back to the Activity instance if channel isn't available.
+    room: sdk.channelId || sdk.instanceId,
   };
 }

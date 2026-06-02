@@ -145,6 +145,38 @@ Discord URL Mapping every time. To stop re-pasting, pick one:
 
 ---
 
+## Play as a Discord bot (optional)
+
+The same app can *also* be a chat bot that plays the **same game** as the
+Activity — a solve in chat updates the Activity grid live, and vice-versa
+(both share one game per channel via `gameStore`). The bot is optional: with no
+token, the server runs Activity-only exactly as before.
+
+**Setup**
+1. Developer Portal → your app → **Bot** → **Reset Token**, copy it.
+2. Put it in `.env`: `DISCORD_BOT_TOKEN=...` (optionally `DISCORD_GUILD_ID=<server id>`
+   to register slash commands instantly in one server; otherwise global commands
+   take up to ~1 hour to appear).
+3. Invite the bot: **Installation** (or OAuth2 URL Generator) with the
+   `applications.commands` + `bot` scopes, open the link, add it to your server.
+4. `npm run dev:server` (or `npm start`) — you'll see `[bot] logged in as …`.
+
+**Commands**
+| Command | Does |
+|---|---|
+| `/crossword [layout] [difficulty]` | Start a new crossword in this channel |
+| `/answer <number> <direction> <word>` | Submit an answer (correct → fills, locks, scores) |
+| `/reveal <number> <direction>` | Reveal a clue's answer (no points) |
+| `/board` | Re-post the current board |
+| `/leaderboard` | Show scores |
+
+The board is posted as an embed (ASCII grid + clue lists + scores) and edits
+itself live as people solve. Scoring matches the Activity: points = clue length
+to whoever completes it. The bot is best for **mini** puzzles (a 15×15's clue
+list is large for chat); the Activity is better for big grids.
+
+---
+
 ## Deploying for real
 
 - **One-origin (simplest):** `npm run build` (outputs `client/dist`), then run
