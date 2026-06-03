@@ -23,6 +23,13 @@ export function indexPuzzle(puzzle) {
 
 export const clueId = (e) => `${e.direction}-${e.number}`;
 
+const _ta = typeof document !== "undefined" ? document.createElement("textarea") : null;
+export function decodeHtml(str) {
+  if (!_ta) return str;
+  _ta.innerHTML = str;
+  return _ta.value;
+}
+
 // Cells of an entry, in order.
 export function entryCells(e) {
   const out = [];

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { initSession } from "./discordSdk.js";
 import { connect } from "./net.js";
-import { indexPuzzle, entryCells, clueId } from "./crossword/puzzle.js";
+import { indexPuzzle, entryCells, clueId, decodeHtml } from "./crossword/puzzle.js";
 import Grid from "./components/Grid.jsx";
 import Clues from "./components/Clues.jsx";
 import Scoreboard from "./components/Scoreboard.jsx";
@@ -312,7 +312,7 @@ export default function App() {
                   <span className="cluebar-num">
                     {currentEntry.number} {currentEntry.direction}
                   </span>
-                  <span className="cluebar-text">{currentEntry.clue}</span>
+                  <span className="cluebar-text">{decodeHtml(currentEntry.clue)}</span>
                   <button className="ghost" onClick={() => sel && send({ type: "reveal", row: sel.r, col: sel.c })}>
                     Reveal letter
                   </button>

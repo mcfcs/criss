@@ -1,4 +1,4 @@
-import { clueId } from "../crossword/puzzle.js";
+import { clueId, decodeHtml } from "../crossword/puzzle.js";
 
 function ClueList({ title, entries, solved, currentId, onSelect }) {
   return (
@@ -13,7 +13,7 @@ function ClueList({ title, entries, solved, currentId, onSelect }) {
           return (
             <li key={id} className={cls} onClick={() => onSelect(e)}>
               <span className="cnum">{e.number}</span>
-              <span className="ctext">{e.clue}</span>
+              <span className="ctext">{decodeHtml(e.clue)}</span>
               {solved.has(id) && <span className="check">✓</span>}
             </li>
           );
